@@ -91,27 +91,35 @@ Each device service exposes:
 
 ## Logging
 
-PyRig uses Python's stdlib logging with ZeroMQ log aggregation.
+PyRig uses [structlog](https://www.structlog.org/) for structured logging with ZeroMQ log aggregation.
 
 **Enable logging:**
 ```python
-import logging
-logging.basicConfig(level=logging.INFO)  # See all pyrig and node logs
-
 from pyrig import Rig, RigConfig
+from pyrig.logging import configure_rig_logging
+
+# Configure structured logging
+logger = configure_rig_logging(level="INFO")
+
 rig = Rig(zctx, config)
 await rig.start()
 ```
 
-The Rig automatically receives logs from all nodes and forwards them to Python's logging system under the `pyrig.nodes` logger. You'll see logs like:
+The Rig automatically receives JSON logs from all nodes. You'll see structured output like:
 
 ```
-2025-11-05 20:58:00 - pyrig.rig - INFO - Starting MyRig...
-2025-11-05 20:58:00 - pyrig.nodes - INFO - [node.primary.INFO] Node primary started
-2025-11-05 20:58:02 - pyrig.rig - INFO - MyRig ready with 4 devices
+2025-11-05T20:58:00.123Z [info     ] starting_rig                   component=rig rig_name=MyRig
+2025-11-05T20:58:00.456Z [info     ] node_started                   node_id=primary log_addr=tcp://localhost:9001
+2025-11-05T20:58:02.789Z [info     ] rig_ready                      component=rig rig_name=MyRig device_count=4
 ```
 
-Users opt-in by configuring Python logging. No logs appear by default (library best practice).
+**Benefits of structured logging:**
+- Easy filtering by field: `node_id`, `device_id`, `component`, etc.
+- JSON output option for log aggregation systems
+- Context binding for distributed tracing
+- No string parsing needed
+
+No logs appear by default (library best practice).
 
 ## Customization
 

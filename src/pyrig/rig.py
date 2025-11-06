@@ -1,9 +1,10 @@
 """Primary controller for rig orchestration."""
 
 import asyncio
-import logging
+import json
 from multiprocessing import Process
 
+import structlog
 import zmq
 import zmq.asyncio
 
@@ -11,10 +12,34 @@ from pyrig.config import RigConfig
 from pyrig.device import DeviceClient
 from pyrig.node import NodeService, ProvisionComplete, ProvisionedDevice, ProvisionResponse
 
-logger = logging.getLogger(__name__)
+# Logger will be configured by user via configure_rig_logging()
+logger = structlog.get_logger(__name__)
 
 
-def _run_node_service(node_id: str, controller_addr: str, start_port: int, service_cls: type[NodeService]):
+def configure_console_logging(level: str = "INFO"):
+    """Configure structlog for the rig and return self.log.
+
+    Args:
+        level: Minimum log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+
+    Returns:
+        Configured logger for the rig
+    """
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            structlog.dev.ConsoleRenderer(),  # Pretty console output
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(level.lower()),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=False,
+    )
+
+
+def _run_node_service(node_id: str, ctrl_port: int, log_port: int, start_port: int, service_cls: type[NodeService]):
     """Run NodeService in a subprocess.
 
     This function is the target for subprocess.Process.
@@ -29,8 +54,8 @@ def _run_node_service(node_id: str, controller_addr: str, start_port: int, servi
 
     async def _run():
         zctx = zmq.asyncio.Context()
-        node = service_cls(zctx, node_id, start_port)
-        await node.run(controller_addr)
+        node = service_cls(zctx, node_id, "localhost", ctrl_port=ctrl_port, log_port=log_port, start_port=start_port)
+        await node.run()
 
     asyncio.run(_run())
 
@@ -53,6 +78,7 @@ class Rig:
     NODE_SERVICE_CLASS: type[NodeService] = NodeService
 
     def __init__(self, zctx: zmq.asyncio.Context, config: RigConfig):
+        self.log = structlog.get_logger().bind(component="rig")
         self.zctx = zctx
         self.config = config
         self.provisions: dict[str, ProvisionedDevice] = {}
@@ -72,7 +98,11 @@ class Rig:
             connection_timeout: How long to wait for all devices to connect
             provision_timeout: How long to wait for nodes to provision
         """
-        logger.info(f"Starting {self.config.metadata.name}...")
+        # Configure structlog if not already configured
+        if not structlog.is_configured():
+            configure_console_logging()
+
+        self.log.info("starting_rig", rig_name=self.config.metadata.name)
 
         # Step 1: Start control listener and log aggregator
         control_port = self.config.metadata.control_port
@@ -80,7 +110,7 @@ class Rig:
 
         log_port = self.config.metadata.log_port
         self._log_socket.bind(f"tcp://*:{log_port}")
-        logger.info(f"Log aggregator listening on tcp://localhost:{log_port}")
+        self.log.info("log_aggregator_listening", port=log_port)
 
         # Start log receiver task
         self._log_watch_task = asyncio.create_task(self._receive_logs())
@@ -97,7 +127,7 @@ class Rig:
         # Step 5: Wait for all devices to send heartbeats
         await self._wait_for_connections(timeout=connection_timeout)
 
-        logger.info(f"{self.config.metadata.name} ready with {len(self.devices)} devices")
+        self.log.info("rig_ready", rig_name=self.config.metadata.name, device_count=len(self.devices))
 
     def create_clients(self) -> None:
         """Create DeviceClients from provisions. Override to customize client types."""
@@ -116,8 +146,8 @@ class Rig:
         if not local_nodes:
             return {}
 
-        # Controller address for nodes to connect to
-        controller_addr = f"tcp://localhost:{self.config.metadata.control_port}"
+        ctrl_port = self.config.metadata.control_port
+        log_port = self.config.metadata.log_port
 
         processes = {}
         start_port = 10000
@@ -125,7 +155,7 @@ class Rig:
             # Create subprocess running NodeService
             process = Process(
                 target=_run_node_service,
-                args=(node_id, controller_addr, start_port, self.NODE_SERVICE_CLASS),
+                args=(node_id, ctrl_port, log_port, start_port, self.NODE_SERVICE_CLASS),
                 name=f"node-{node_id}",
                 daemon=True,
             )
@@ -165,7 +195,7 @@ class Rig:
                     if action == "provision":
                         # Node is requesting config
                         if node_id not in self.config.nodes:
-                            logger.error(f"Unknown node: {node_id}")
+                            self.log.error("unknown_node", node_id=node_id)
                             continue
 
                         node_config = self.config.nodes[node_id]
@@ -189,7 +219,7 @@ class Rig:
 
         except asyncio.TimeoutError:
             missing = expected_nodes - provisioned_nodes
-            logger.error(f"Provisioning timeout. Missing nodes: {missing}")
+            self.log.error("provisioning_timeout", missing_nodes=list(missing))
 
             await self._shutdown_nodes(provisioned_nodes)
 
@@ -215,7 +245,7 @@ class Rig:
             try:
                 await self._control_socket.send_multipart([identity, b"", b"shutdown"])
             except Exception as e:
-                logger.error(f"Failed to send shutdown to {node_id}: {e}")
+                self.log.error("shutdown_send_failed", node_id=node_id, error=str(e))
 
         # Wait for shutdown acknowledgments
         acknowledged = set()
@@ -254,41 +284,39 @@ class Rig:
         failed = []
         for device_id, result in zip(tasks.keys(), results):
             if isinstance(result, Exception):
-                logger.error(f"{device_id}: {result}")
+                self.log.error("device_connection_error", device_id=device_id, error=str(result))
                 failed.append(device_id)
             elif not result:  # wait_for_connection returned False
-                logger.warning(f"{device_id} connection timeout")
+                self.log.warning("device_connection_timeout", device_id=device_id)
                 failed.append(device_id)
 
         if failed:
-            logger.warning(f"{len(failed)}/{len(self.devices)} devices did not connect")
+            self.log.warning("devices_not_connected", failed_count=len(failed), total_count=len(self.devices))
 
     async def _receive_logs(self):
-        """Background task to receive logs from nodes and forward to Python logging."""
-        node_logger = logging.getLogger("pyrig.nodes")
-
+        """Background task to receive JSON logs from nodes and forward to structlog."""
         try:
             while True:
-                # Receive multipart message: [topic, message]
-                parts = await self._log_socket.recv_multipart()
-                if len(parts) >= 2:
-                    topic = parts[0].decode("utf-8", errors="replace")
-                    message = parts[1].decode("utf-8", errors="replace")
+                # Receive JSON log message
+                log_data = await self._log_socket.recv_json()
 
-                    # Topic format: "node.{node_id}.{level}"
-                    # Extract level from topic and log appropriately
-                    if ".ERROR" in topic or ".CRITICAL" in topic:
-                        node_logger.error(f"[{topic}] {message}")
-                    elif ".WARNING" in topic:
-                        node_logger.warning(f"[{topic}] {message}")
-                    elif ".DEBUG" in topic:
-                        node_logger.debug(f"[{topic}] {message}")
-                    else:  # INFO or unknown
-                        node_logger.info(f"[{topic}] {message}")
+                # Extract level and event from the log data
+                level = log_data.get("level", "info").lower()
+                event = log_data.get("event", "")
+
+                # Remove level and event from data to use as context
+                context = {k: v for k, v in log_data.items() if k not in ("level", "event")}
+
+                # Log with appropriate level using the main logger
+                log_method = getattr(logger, level, self.log.info)
+                log_method(event, **context)
+
         except asyncio.CancelledError:
             pass  # Task cancelled during shutdown
+        except json.JSONDecodeError as e:
+            self.log.error("json_decode_error", error=str(e))
         except Exception as e:
-            logger.error(f"Error in log receiver: {e}")
+            self.log.error("log_receiver_error", error=str(e))
 
     def get_agent(self, device_id: str) -> DeviceClient:
         """Get agent for a specific device.

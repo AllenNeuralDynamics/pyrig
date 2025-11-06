@@ -10,17 +10,17 @@ Usage:
 """
 
 import asyncio
-import logging
 import sys
 from pathlib import Path
 
+import structlog
 import zmq.asyncio
 from rich import print
 
-from pyrig import Rig, RigConfig
+from pyrig import Rig, RigConfig, configure_console_logging
 
-# Configure logging to see pyrig logs
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = structlog.get_logger()
+configure_console_logging(level="INFO")
 
 
 async def main():
