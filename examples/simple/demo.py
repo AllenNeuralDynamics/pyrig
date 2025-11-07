@@ -137,18 +137,15 @@ async def main():
             props = await pump.get_props()
             print(f"Total dispensed: {props.res['total_volume_dispensed'].value} mL")
 
-        # Keep running
-        print("\n[cyan]Press Ctrl+C to exit[/cyan]")
-        try:
-            await asyncio.Event().wait()
-        except KeyboardInterrupt:
-            print("\n[yellow]Shutting down...[/yellow]")
+        # # Keep running
+        # print("\n[cyan]Press Ctrl+C to exit[/cyan]")
+        # try:
+        #     await asyncio.Event().wait()
+        # except KeyboardInterrupt:
+        #     print("\n[yellow]Shutting down...[/yellow]")
     finally:
         await rig.stop()
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    asyncio.run(main())

@@ -12,7 +12,7 @@ from .config import RigConfig, NodeConfig
 from .device.conn import DeviceAddress, DeviceAddressTCP
 
 # Logging configuration
-from .rig import configure_console_logging
+from .utils import configure_console_logging
 
 __all__ = [
     # Rig layer

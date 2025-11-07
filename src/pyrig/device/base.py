@@ -6,6 +6,7 @@ from functools import wraps
 from typing import Any, Literal, Self, Union, get_args, get_origin
 
 from pydantic import BaseModel, Field
+import structlog
 
 _REQ_CMD_ = b"REQ"
 _GET_CMD_ = b"GET"
@@ -60,6 +61,8 @@ class Device:
 
     def __init__(self, uid: str):
         self.uid = uid
+        self.log = structlog.get_logger(device_uid=uid)
+        self.log.info("Initializing...")
 
 
 class AttributeInfo(BaseModel):

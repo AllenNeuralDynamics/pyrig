@@ -67,6 +67,7 @@ class TemperatureController(Device):
     def start_regulation(self) -> str:
         """Start active temperature regulation."""
         self._is_regulating = True
+        self.log.info(f"Temperature regulation started towards {self._target_temp}°C")
         return f"Temperature regulation started (target: {self._target_temp}°C)"
 
     @describe(label="Stop Regulation", desc="Stop temperature regulation")
