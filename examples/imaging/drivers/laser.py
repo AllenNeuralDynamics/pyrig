@@ -15,6 +15,7 @@ class Laser(Device):
         self._wavelength = wavelength
         self._power_setpoint: float = 0.0
         self._is_on: bool = False
+        self.log.info("laser_initialized", wavelength=wavelength)
 
     @property
     @describe(label="Wavelength", units="nm")
@@ -47,23 +48,28 @@ class Laser(Device):
             raise ValueError("Power setpoint must be non-negative")
         if value > 100:
             raise ValueError("Power setpoint cannot exceed 100")
+        self.log.debug("power_setpoint_changed", old_value=self._power_setpoint, new_value=value)
         self._power_setpoint = value
 
     def turn_on(self) -> bool:
         """Turn on the laser."""
         if self._power_setpoint <= 0:
+            self.log.error("turn_on_failed", reason="zero_power_setpoint")
             raise ValueError("Cannot turn on laser with zero power setpoint")
+        self.log.info("laser_turned_on", power_setpoint=self._power_setpoint)
         self._is_on = True
         return True
 
     def turn_off(self) -> bool:
         """Turn off the laser."""
+        self.log.info("laser_turned_off")
         self._is_on = False
         return True
 
     @describe(label="Set Power", desc="Set laser power and turn on")
     def set_power_and_on(self, power: float) -> str:
         """Set power setpoint and turn on the laser in one command."""
+        self.log.info("set_power_and_on", power=power)
         self.power_setpoint = power
         self.turn_on()
         return f"Laser on at {power} power"
@@ -71,6 +77,7 @@ class Laser(Device):
     @describe(label="Emergency Stop", desc="Emergency stop - turn off immediately")
     def emergency_stop(self) -> str:
         """Emergency stop the laser."""
+        self.log.warning("emergency_stop_triggered")
         self._is_on = False
         self._power_setpoint = 0.0
         return "Emergency stop executed"

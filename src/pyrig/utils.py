@@ -7,6 +7,9 @@ import zmq
 import zmq.asyncio
 
 
+INCLUDE_CALLSITE_IN_LOGS = True
+
+
 def add_timestamp_if_missing(logger, method_name, event_dict):
     """Only add timestamp if not already present (forwarded logs)."""
     if "timestamp" not in event_dict:
@@ -21,22 +24,46 @@ def add_level_if_missing(logger, method_name, event_dict):
     return event_dict
 
 
-# Use in config:
-BASE_STRUCTLOG_PROCESSORS = [
-    structlog.contextvars.merge_contextvars,
-    add_level_if_missing,
-    add_timestamp_if_missing,
-]
+def _get_base_processors() -> list:
+    """Get base structlog processors.
+
+    Uses conditional processors that only add timestamp/level if missing,
+    so they work for both local logs and forwarded logs from nodes.
+
+    Returns:
+        List of structlog processors
+    """
+    processors = [
+        structlog.contextvars.merge_contextvars,
+        add_level_if_missing,
+        add_timestamp_if_missing,
+    ]
+
+    if INCLUDE_CALLSITE_IN_LOGS:
+        processors.insert(
+            1,
+            structlog.processors.CallsiteParameterAdder(
+                [
+                    structlog.processors.CallsiteParameter.MODULE,
+                    structlog.processors.CallsiteParameter.FUNC_NAME,
+                ]
+            ),
+        )
+
+    return processors
 
 
 def configure_console_logging(level: str = "INFO"):
     """Configure structlog for the rig with console output.
 
+    Uses conditional processors to preserve timestamps/levels from forwarded node logs
+    while still adding them to locally-generated logs.
+
     Args:
         level: Minimum log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
     """
     structlog.configure(
-        processors=BASE_STRUCTLOG_PROCESSORS + [structlog.dev.ConsoleRenderer()],
+        processors=_get_base_processors() + [structlog.dev.ConsoleRenderer()],
         wrapper_class=structlog.make_filtering_bound_logger(level.lower()),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
@@ -75,16 +102,16 @@ def configure_zmq_logging(zmq_socket: zmq.Socket):
     """Configure structlog for a node with ZMQ transport.
 
     This configures structlog to send all log messages over a ZMQ PUB socket
-    to a central log aggregator. Local output is discarded.
+    to a central log aggregator. Logs are fully processed (timestamped, leveled)
+    before being sent.
 
     Args:
         zmq_socket: ZMQ PUB socket connected to log aggregator
     """
-
     structlog.configure(
-        processors=BASE_STRUCTLOG_PROCESSORS,
+        processors=_get_base_processors(),
         context_class=dict,
-        logger_factory=lambda: ZMQLogger(zmq_socket),  # ZMQ is the logger itself!
+        logger_factory=lambda: ZMQLogger(zmq_socket),
         cache_logger_on_first_use=False,
     )
 

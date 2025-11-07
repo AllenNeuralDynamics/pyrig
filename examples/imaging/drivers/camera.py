@@ -20,6 +20,7 @@ class Camera(Device):
         super().__init__(uid=uid)
         self._pixel_size = parse_tuple_str(pixel_size_um)
         self._exposure_time: float = 0.0
+        self.log.info("camera_initialized", pixel_size=self._pixel_size)
 
     @property
     @describe(label="Pixel Size", units="um")
@@ -46,6 +47,7 @@ class Camera(Device):
             raise ValueError("Exposure time must be non-negative")
         if value > 100:
             raise ValueError("Exposure time cannot exceed 100")
+        self.log.debug("exposure_time_changed", old_value=self._exposure_time, new_value=value)
         self._exposure_time = value
 
 
@@ -69,14 +71,17 @@ class CameraService(DeviceService[Camera]):
         tmp_folder = Path(__file__).parent.parent / "tmp"
         tmp_folder.mkdir(exist_ok=True)
         self._writer = Writer(str(tmp_folder / f"{device.uid}.txt"))
+        self.log.info("camera_service_initialized", output_path=str(self._writer.file_path))
 
     @describe(label="Start Stream", desc="Start streaming frames to file")
     def start_stream(self, num_frames: int = 10) -> str:
         """Start streaming frames."""
+        self.log.info("stream_started", num_frames=num_frames)
         self._writer.write(f"Starting stream with {num_frames} frames\n")
         for i in range(num_frames):
             self._writer.write(f"Frame {i + 1}\n")
         self._writer.write("Stream complete\n")
+        self.log.info("stream_completed", num_frames=num_frames, output_file=self._writer.file_path.name)
         return f"Streamed {num_frames} frames to {self._writer.file_path.name}"
 
 
