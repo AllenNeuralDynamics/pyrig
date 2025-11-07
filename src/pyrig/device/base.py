@@ -61,8 +61,8 @@ class Device:
 
     def __init__(self, uid: str):
         self.uid = uid
-        self.log = structlog.get_logger(device_uid=uid)
-        self.log.info("Initializing...")
+        self.log = structlog.get_logger(device=uid)
+        self.log.info("Initializing device...")
 
 
 class AttributeInfo(BaseModel):

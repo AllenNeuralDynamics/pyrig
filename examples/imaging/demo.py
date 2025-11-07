@@ -105,19 +105,15 @@ async def main():
 
             print("\n[green]✓ CameraClient with service-level commands working![/green]")
 
-        # Keep running
-        print("\n[cyan]Rig ready! Press Ctrl+C to exit.[/cyan]")
-        try:
-            await asyncio.Event().wait()
-        except KeyboardInterrupt:
-            print("\n[yellow]Shutting down...[/yellow]")
+        # # Keep running
+        # print("\n[cyan]Rig ready! Press Ctrl+C to exit.[/cyan]")
+        # try:
+        #     await asyncio.Event().wait()
+        # except KeyboardInterrupt:
+        #     print("\n[yellow]Shutting down...[/yellow]")
     finally:
         await controller.stop()
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        # Suppress traceback on Ctrl+C (cleanup already handled in main())
-        pass
+    asyncio.run(main())
